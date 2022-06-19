@@ -1,7 +1,13 @@
 const std = @import("std");
 const os = std.os;
-const c = @cImport({
+const fs = std.fs;
+const mem = std.mem;
+const math = std.math;
+const term = @cImport({
     @cInclude("termios.h");
+});
+const sig = @cImport({
+    @cInclude("signal.h");
 });
 
 // The LC-3 has 65,536 memory locations
@@ -70,8 +76,8 @@ fn mem_write(address: u16, val: u16) void {
 }
 
 fn mem_read(address: u16) u16 {
-    if (address == Bar.MR_KBSR) {
-        if (check_key()) {
+    if (address == @enumToInt(Bar.MR_KBSR)) {
+        if (check_key() != 0) {
             memory[@enumToInt(Bar.MR_KBSR)] = (1 << 15);
             // TODO:
             // memory[@enumToInt(Bar.MR_KBDR)] = getchar();
@@ -82,17 +88,20 @@ fn mem_read(address: u16) u16 {
     return memory[address];
 }
 
-fn sign_extend(x: u16, bit_count: i32) u16 {
-    if ((x >> (bit_count - 1)) & 1) {
-        x |= (0xFFFF << bit_count);
+fn sign_extend(val: u16, comptime bit_count: u16) u16 {
+    var extended: u16 = val;
+    // When negative sign, extend with 1's to maintain "negative" values.
+    if (extended & (1 << bit_count - 1) > 0) {
+        extended |= @truncate(u16, (0xFFFF << bit_count));
+        return extended;
     }
-    return x;
+    return extended;
 }
 
 fn update_flags(r: u16) void {
     if (reg[r] == 0) {
         reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_ZRO);
-    } else if (reg[r] >> 15) { // a 1 in the left-most bit indicates negative
+    } else if (reg[r] >> 15 != 0) { // a 1 in the left-most bit indicates negative
         reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_NEG);
     } else {
         reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_POS);
@@ -100,38 +109,53 @@ fn update_flags(r: u16) void {
 }
 
 // TODO: use zig std
-var original_tio: c.termios = undefined;
+var original_tio: term.termios = undefined;
 fn disable_input_buffering() void {
     const stdin_fd = std.os.linux.STDIN_FILENO;
-    _ = c.tcgetattr(stdin_fd, &original_tio);
-    var new_tio: c.termios = original_tio;
-    new_tio.c_lflag &= @bitCast(c_uint, ~c.ICANON & ~c.ECHO);
-    _ = c.tcsetattr(stdin_fd, c.TCSANOW, &new_tio);
+    _ = term.tcgetattr(stdin_fd, &original_tio);
+    var new_tio: term.termios = original_tio;
+    new_tio.c_lflag &= @bitCast(c_uint, ~term.ICANON & ~term.ECHO);
+    _ = term.tcsetattr(stdin_fd, term.TCSANOW, &new_tio);
 }
 
 // TODO: use zig std
 fn restore_input_buffering() void {
     const stdin_fd = std.os.linux.STDIN_FILENO;
-    _ = c.tcsetattr(stdin_fd, c.TCSANOW, &original_tio);
+    _ = term.tcsetattr(stdin_fd, term.TCSANOW, &original_tio);
 }
 
-pub fn main() void {
+// TODO: use zig std
+fn handle_interrupt(signal: c_int) callconv(.C) void {
+    restore_input_buffering();
+    std.debug.print("\n", .{});
+    std.debug.print("{}", .{signal});
+    os.exit(2);
+}
+
+pub fn check_key() u16 {
+    return 0;
+}
+
+pub fn main() !void {
     // Load arguments
-    const argv: [][*:0]u8 = os.argv;
-    if (argv.len < 2) {
-        std.debug.print("lc3 [image-file1] ...\n", .{});
-        os.exit(2);
-    }
-    const argc: i32 = argv.len;
-    var j: i32 = 1;
-    while (j < argc) : (j += 1) {
-        // not implemented
-        if (!read_image(argv[j])) {
-            std.debug.print("failed to load image: {s}\n", argv[j]);
-            os.exit(1);
-        }
-    }
+    // const argv: [][*:0]u8 = os.argv;
+    // if (argv.len < 2) {
+    //     std.debug.print("lc3 [image-file1] ...\n", .{});
+    //     os.exit(2);
+    // }
+    // const argc: usize = argv.len;
+    // var j: usize = 1;
+    // while (j < argc) : (j += 1) {
+    //     // not implemented
+    //     if (!read_image(@as([]const u8, argv[j]))) {
+    //         std.debug.print("failed to load image: {s}\n", argv[j]);
+    //         os.exit(1);
+    //     }
+    // }
+
     // Setup
+    _ = sig.signal(std.os.SIG.INT, handle_interrupt);
+    disable_input_buffering();
 
     // since exactly one condition flag should be set at any given time, set the Z flag
     reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_ZRO);
@@ -139,18 +163,16 @@ pub fn main() void {
     // 0x3000 is the default
     const Foo = enum(u16) { PC_START = 0x3000 };
     reg[@enumToInt(Registers.R_PC)] = @enumToInt(Foo.PC_START);
-    std.debug.print("{any}\n", .{reg});
 
     var running: bool = true;
 
     while (running) {
         // FETCH
         var instr: u16 = mem_read(reg[@enumToInt(Registers.R_PC)] + 1);
-        var op: u16 = @intToEnum(Opcodes, instr >> 12);
+        var op: Opcodes = @intToEnum(Opcodes, instr >> 12);
 
         switch (op) {
             .OP_ADD => {
-
                 // destination register (DR)
                 var r0: u16 = (instr >> 9) & 0x7;
                 // first operand (SR1)
@@ -158,8 +180,8 @@ pub fn main() void {
                 // whether we are in immediate mode
                 var imm_flag: u16 = (instr >> 5) & 0x1;
 
-                if (imm_flag) {
-                    var imm5: u16 = sing_extend(instr & 0x1F, 5);
+                if (imm_flag == 1) {
+                    var imm5: u16 = sign_extend(instr & 0x1F, 5);
                     reg[r0] = reg[r1] + imm5;
                 } else {
                     var r2: u16 = instr & 0x7;
@@ -173,7 +195,7 @@ pub fn main() void {
                 var r1: u16 = (instr >> 6) & 0x7;
                 var imm_flag: u16 = (instr >> 5) & 0x1;
 
-                if (imm_flag) {
+                if (imm_flag == 1) {
                     var imm5: u16 = sign_extend(instr & 0x1F, 5);
                     reg[r0] = reg[r1] & imm5;
                 } else {
@@ -193,7 +215,7 @@ pub fn main() void {
                 var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
                 var cond_flag: u16 = (instr >> 9) & 0x7;
 
-                if (cond_flag & reg[@enumToInt(Registers.R_COND)]) {
+                if (cond_flag & reg[@enumToInt(Registers.R_COND)] != 0) {
                     reg[@enumToInt(Registers.R_PC)] += pc_offset;
                 }
             },
@@ -206,8 +228,8 @@ pub fn main() void {
                 var long_flag: u16 = (instr >> 11) & 1;
                 reg[@enumToInt(Registers.R_R7)] = reg[@enumToInt(Registers.R_PC)];
 
-                if (long_flag) {
-                    var long_pc_offset: u16 = sing_extend(instr & 0x7FF, 11);
+                if (long_flag == 1) {
+                    var long_pc_offset: u16 = sign_extend(instr & 0x7FF, 11);
                     reg[@enumToInt(Registers.R_PC)] += long_pc_offset; // JSR
                 } else {
                     var r1: u16 = (instr >> 6) & 0x7;
@@ -266,55 +288,40 @@ pub fn main() void {
 
                 switch (@intToEnum(Traps, instr & 0xFF)) {
                     .TRAP_GETC => {
-                        // TODO: no casting?
-                        reg[@enumToInt(Registers.R_R0)] = std.io.getStdIn().reader().readByte();
+                        reg[@enumToInt(Registers.R_R0)] = try std.io.getStdIn().reader().readByte();
                         update_flags(@enumToInt(Registers.R_R0));
                     },
-                    .TRAP_OUT => {
-                        try std.io.getStdOut().writer().print("{c}", reg[@enumToInt(Registers.R_R0)]);
-                    },
+                    .TRAP_OUT => {},
                     .TRAP_PUTS => {
-                        // one char per word
-                        var c: *i16 = memory + reg[@enumToInt(Registers.R_R0)];
-
-                        while (*c) : (c += 1) {
-                            try std.io.getStdOut().writer().print("{c}", *c);
+                        const str = mem.span(memory[@enumToInt(Registers.R_R0)..]);
+                        for (str) |ch16| {
+                            try std.io.getStdOut().writer().writeByte(@truncate(u8, ch16));
                         }
                     },
                     .TRAP_IN => {
                         std.debug.print("Enter a character: ", .{});
-                        var c: u8 = std.io.getStdIn().reader().readByte();
-                        try std.io.getStdOut().writer().print("{c}", c);
+                        var c: u8 = try std.io.getStdIn().reader().readByte();
+                        try std.io.getStdOut().writer().print("{c}", .{c});
                         reg[@enumToInt(Registers.R_R0)] = c;
                         update_flags(@enumToInt(Registers.R_R0));
                     },
                     .TRAP_PUTSP => {
-                        // one char per byte (two bytes per word)
-                        // here we need to swap back to
-                        // big endian format
-                        var c: *u16 = memory + reg[@enumToInt(Registers.R_R0)];
-
-                        while (*c) : (c += 1) {
-                            var char1: u8 = *c & 0xFF;
-                            try std.io.getStdOut().writer().print("{c}", char1);
-                            var char2: u8 = *c >> 8;
-
-                            if (char2) {
-                                try std.io.getStdOut().writer().print("{c}", char2);
-                            }
+                        const str = mem.span(memory[@enumToInt(Registers.R_R0)..]);
+                        for (mem.sliceAsBytes(str)) |ch8| {
+                            try std.io.getStdOut().writer().writeByte(ch8);
                         }
                     },
                     .TRAP_HALT => {
-                        std.debug.print("HALT");
+                        std.debug.print("HALT", .{});
                         running = false;
                     },
                 }
             },
-            // TODO: implement
-            // .OP_RES => {},
-            // .OP_RTI => {},
-            else => {
-                exit(127);
+            .OP_RES => {
+                os.exit(127);
+            },
+            .OP_RTI => {
+                os.exit(127);
             },
         }
     }
