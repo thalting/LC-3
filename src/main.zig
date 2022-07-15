@@ -3,12 +3,6 @@ const os = std.os;
 const fs = std.fs;
 const mem = std.mem;
 const math = std.math;
-const term = @cImport({
-    @cInclude("termios.h");
-});
-const sig = @cImport({
-    @cInclude("signal.h");
-});
 
 // The LC-3 has 65,536 memory locations
 // (the maximum that is addressable by a 16-bit unsigned integer 2^16)
@@ -79,8 +73,7 @@ fn mem_read(address: u16) u16 {
     if (address == @enumToInt(Bar.MR_KBSR)) {
         if (check_key() != 0) {
             memory[@enumToInt(Bar.MR_KBSR)] = (1 << 15);
-            // TODO:
-            // memory[@enumToInt(Bar.MR_KBDR)] = getchar();
+            memory[@enumToInt(Bar.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
         } else {
             memory[@enumToInt(Bar.MR_KBSR)] = 0;
         }
@@ -108,27 +101,21 @@ fn update_flags(r: u16) void {
     }
 }
 
-// TODO: use zig std
-var original_tio: term.termios = undefined;
-fn disable_input_buffering() void {
-    const stdin_fd = std.os.linux.STDIN_FILENO;
-    _ = term.tcgetattr(stdin_fd, &original_tio);
-    var new_tio: term.termios = original_tio;
-    new_tio.c_lflag &= @bitCast(c_uint, ~term.ICANON & ~term.ECHO);
-    _ = term.tcsetattr(stdin_fd, term.TCSANOW, &new_tio);
+var original_tio: os.termios = undefined;
+fn disable_input_buffering() !void {
+    original_tio = try os.tcgetattr(0);
+    var new_tio = original_tio;
+    new_tio.lflag &= ~os.system.ICANON & ~os.system.ECHO;
+    try os.tcsetattr(0, os.TCSA.NOW, new_tio);
 }
 
-// TODO: use zig std
-fn restore_input_buffering() void {
-    const stdin_fd = std.os.linux.STDIN_FILENO;
-    _ = term.tcsetattr(stdin_fd, term.TCSANOW, &original_tio);
+fn restore_input_buffering() !void {
+    try os.tcsetattr(0, os.TCSA.NOW, original_tio);
 }
 
-// TODO: use zig std
 fn handle_interrupt(signal: c_int) callconv(.C) void {
-    restore_input_buffering();
-    std.debug.print("\n", .{});
-    std.debug.print("{}", .{signal});
+    restore_input_buffering() catch {};
+    std.log.info("killed by signal: {}", .{signal});
     os.exit(2);
 }
 
@@ -154,8 +141,8 @@ pub fn main() !void {
     // }
 
     // Setup
-    _ = sig.signal(std.os.SIG.INT, handle_interrupt);
-    disable_input_buffering();
+    try os.sigaction(os.SIG.INT, &.{ .handler = .{ .handler = handle_interrupt }, .mask = undefined, .flags = undefined }, null);
+    try disable_input_buffering();
 
     // since exactly one condition flag should be set at any given time, set the Z flag
     reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_ZRO);
