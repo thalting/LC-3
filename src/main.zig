@@ -71,7 +71,7 @@ fn mem_write(address: u16, val: u16) void {
 
 fn mem_read(address: u16) u16 {
     if (address == @enumToInt(Bar.MR_KBSR)) {
-        if (check_key() != 0) {
+        if (check_key()) {
             memory[@enumToInt(Bar.MR_KBSR)] = (1 << 15);
             memory[@enumToInt(Bar.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
         } else {
@@ -119,44 +119,69 @@ fn handle_interrupt(signal: c_int) callconv(.C) void {
     os.exit(2);
 }
 
-pub fn check_key() u16 {
-    return 0;
+pub fn check_key() bool {
+    var poll_stdin = [_]os.pollfd{.{
+        .fd = 0,
+        .events = os.POLL.IN,
+        .revents = undefined,
+    }};
+    _ = os.poll(&poll_stdin, 0) catch return false;
+    return poll_stdin[0].revents & os.POLL.IN > 0;
+}
+
+pub fn readImage(path: []const u8) !void {
+    const img_file = try fs.cwd().openFile(path, .{});
+    defer img_file.close();
+    const reader = img_file.reader();
+    var orig = try reader.readIntBig(u16);
+    while (reader.readIntBig(u16) catch |e| switch (e) {
+        error.EndOfStream => null,
+        else => return e,
+    }) |content| : (orig += 1) {
+        if (orig >= memory.len) return error.FileTooBig;
+        memory[orig] = content;
+    }
 }
 
 pub fn main() !void {
     // Load arguments
-    // const argv: [][*:0]u8 = os.argv;
-    // if (argv.len < 2) {
-    //     std.debug.print("lc3 [image-file1] ...\n", .{});
-    //     os.exit(2);
-    // }
-    // const argc: usize = argv.len;
-    // var j: usize = 1;
-    // while (j < argc) : (j += 1) {
-    //     // not implemented
-    //     if (!read_image(@as([]const u8, argv[j]))) {
-    //         std.debug.print("failed to load image: {s}\n", argv[j]);
-    //         os.exit(1);
-    //     }
-    // }
+    {
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        var arg_it = try std.process.ArgIterator.initWithAllocator(gpa.allocator());
+        defer arg_it.deinit();
+        var found_img = false;
+        _ = arg_it.skip();
+        while (arg_it.next()) |img| {
+            readImage(img) catch |e| {
+                std.log.err("failed to load image {s}: {s}", .{ img, @errorName(e) });
+                os.exit(1);
+            };
+            found_img = true;
+        }
+        if (!found_img) {
+            std.log.info("usage: lc3 [image-file1] ...", .{});
+            os.exit(1);
+        }
+    }
 
     // Setup
     try os.sigaction(os.SIG.INT, &.{ .handler = .{ .handler = handle_interrupt }, .mask = undefined, .flags = undefined }, null);
     try disable_input_buffering();
+    defer restore_input_buffering() catch {};
 
     // since exactly one condition flag should be set at any given time, set the Z flag
     reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_ZRO);
-    // set the PC to starting position
-    // 0x3000 is the default
-    const Foo = enum(u16) { PC_START = 0x3000 };
-    reg[@enumToInt(Registers.R_PC)] = @enumToInt(Foo.PC_START);
+    // set the PC to default starting position
+    reg[@enumToInt(Registers.R_PC)] = 0x3000;
 
     var running: bool = true;
 
     while (running) {
         // FETCH
-        var instr: u16 = mem_read(reg[@enumToInt(Registers.R_PC)] + 1);
+        var instr: u16 = mem_read(reg[@enumToInt(Registers.R_PC)]);
         var op: Opcodes = @intToEnum(Opcodes, instr >> 12);
+        reg[@enumToInt(Registers.R_PC)] += 1;
 
         switch (op) {
             .OP_ADD => {
@@ -169,10 +194,10 @@ pub fn main() !void {
 
                 if (imm_flag == 1) {
                     var imm5: u16 = sign_extend(instr & 0x1F, 5);
-                    reg[r0] = reg[r1] + imm5;
+                    reg[r0] = reg[r1] +% imm5;
                 } else {
                     var r2: u16 = instr & 0x7;
-                    reg[r0] = reg[r1] + reg[r2];
+                    reg[r0] = reg[r1] +% reg[r2];
                 }
 
                 update_flags(r0);
@@ -203,7 +228,7 @@ pub fn main() !void {
                 var cond_flag: u16 = (instr >> 9) & 0x7;
 
                 if (cond_flag & reg[@enumToInt(Registers.R_COND)] != 0) {
-                    reg[@enumToInt(Registers.R_PC)] += pc_offset;
+                    reg[@enumToInt(Registers.R_PC)] +%= pc_offset;
                 }
             },
             .OP_JMP => {
@@ -217,18 +242,17 @@ pub fn main() !void {
 
                 if (long_flag == 1) {
                     var long_pc_offset: u16 = sign_extend(instr & 0x7FF, 11);
-                    reg[@enumToInt(Registers.R_PC)] += long_pc_offset; // JSR
+                    reg[@enumToInt(Registers.R_PC)] +%= long_pc_offset; // JSR
                 } else {
                     var r1: u16 = (instr >> 6) & 0x7;
                     reg[@enumToInt(Registers.R_PC)] = reg[r1]; // JSRR
                 }
-                break;
             },
             .OP_LD => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
 
-                reg[r0] = mem_read(reg[@enumToInt(Registers.R_PC)] + pc_offset);
+                reg[r0] = mem_read(reg[@enumToInt(Registers.R_PC)] +% pc_offset);
                 update_flags(r0);
             },
             .OP_LDI => {
@@ -237,7 +261,7 @@ pub fn main() !void {
                 // PCoffset 9
                 var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
                 // add pc_offset to the current PC, look at that memory location to get the final address
-                reg[r0] = mem_read(mem_read(reg[@enumToInt(Registers.R_PC)] + pc_offset));
+                reg[r0] = mem_read(mem_read(reg[@enumToInt(Registers.R_PC)] +% pc_offset));
                 update_flags(r0);
             },
             .OP_LDR => {
@@ -245,30 +269,30 @@ pub fn main() !void {
                 var r1: u16 = (instr >> 6) & 0x7;
                 var offset: u16 = sign_extend(instr & 0x3F, 6);
 
-                reg[r0] = mem_read(reg[r1] + offset);
+                reg[r0] = mem_read(reg[r1] +% offset);
                 update_flags(r0);
             },
             .OP_LEA => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
-                reg[r0] = reg[@enumToInt(Registers.R_PC)] + pc_offset;
+                reg[r0] = reg[@enumToInt(Registers.R_PC)] +% pc_offset;
                 update_flags(r0);
             },
             .OP_ST => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
-                mem_write(reg[@enumToInt(Registers.R_PC)] + pc_offset, reg[r0]);
+                mem_write(reg[@enumToInt(Registers.R_PC)] +% pc_offset, reg[r0]);
             },
             .OP_STI => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
-                mem_write(mem_read(reg[@enumToInt(Registers.R_PC)] + pc_offset), reg[r0]);
+                mem_write(mem_read(reg[@enumToInt(Registers.R_PC)] +% pc_offset), reg[r0]);
             },
             .OP_STR => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var r1: u16 = (instr >> 6) & 0x7;
                 var offset: u16 = sign_extend(instr & 0x3F, 6);
-                mem_write(reg[r1] + offset, reg[r0]);
+                mem_write(reg[r1] +% offset, reg[r0]);
             },
             .OP_TRAP => {
                 reg[@enumToInt(Registers.R_R7)] = reg[@enumToInt(Registers.R_PC)];
@@ -278,28 +302,30 @@ pub fn main() !void {
                         reg[@enumToInt(Registers.R_R0)] = try std.io.getStdIn().reader().readByte();
                         update_flags(@enumToInt(Registers.R_R0));
                     },
-                    .TRAP_OUT => {},
+                    .TRAP_OUT => {
+                        try std.io.getStdOut().writer().writeByte(@truncate(u8, reg[@enumToInt(Registers.R_R0)]));
+                    },
                     .TRAP_PUTS => {
-                        const str = mem.span(memory[@enumToInt(Registers.R_R0)..]);
+                        const str = mem.sliceTo(memory[reg[@enumToInt(Registers.R_R0)]..], 0);
                         for (str) |ch16| {
                             try std.io.getStdOut().writer().writeByte(@truncate(u8, ch16));
                         }
                     },
                     .TRAP_IN => {
-                        std.debug.print("Enter a character: ", .{});
+                        try std.io.getStdOut().writer().print("Enter a character: ", .{});
                         var c: u8 = try std.io.getStdIn().reader().readByte();
                         try std.io.getStdOut().writer().print("{c}", .{c});
                         reg[@enumToInt(Registers.R_R0)] = c;
                         update_flags(@enumToInt(Registers.R_R0));
                     },
                     .TRAP_PUTSP => {
-                        const str = mem.span(memory[@enumToInt(Registers.R_R0)..]);
+                        const str = mem.sliceTo(memory[reg[@enumToInt(Registers.R_R0)]..], 0);
                         for (mem.sliceAsBytes(str)) |ch8| {
                             try std.io.getStdOut().writer().writeByte(ch8);
                         }
                     },
                     .TRAP_HALT => {
-                        std.debug.print("HALT", .{});
+                        try std.io.getStdOut().writer().print("HALT", .{});
                         running = false;
                     },
                 }
