@@ -2,7 +2,6 @@ const std = @import("std");
 const os = std.os;
 const fs = std.fs;
 const mem = std.mem;
-const math = std.math;
 
 // The LC-3 has 65,536 memory locations
 // (the maximum that is addressable by a 16-bit unsigned integer 2^16)
