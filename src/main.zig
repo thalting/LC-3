@@ -60,7 +60,7 @@ const Traps = enum(u16) {
     TRAP_HALT = 0x25, // halt the program
 };
 
-const Bar = enum(u16) {
+const Keyboard = enum(u16) {
     MR_KBSR = 0xFE00, // keyboard status
     MR_KBDR = 0xFE02, // keyboard data
 };
@@ -70,12 +70,12 @@ fn mem_write(address: u16, val: u16) void {
 }
 
 fn mem_read(address: u16) u16 {
-    if (address == @enumToInt(Bar.MR_KBSR)) {
+    if (address == @enumToInt(Keyboard.MR_KBSR)) {
         if (check_key()) {
-            memory[@enumToInt(Bar.MR_KBSR)] = (1 << 15);
-            memory[@enumToInt(Bar.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
+            memory[@enumToInt(Keyboard.MR_KBSR)] = (1 << 15);
+            memory[@enumToInt(Keyboard.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
         } else {
-            memory[@enumToInt(Bar.MR_KBSR)] = 0;
+            memory[@enumToInt(Keyboard.MR_KBSR)] = 0;
         }
     }
     return memory[address];
