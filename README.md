@@ -1,6 +1,5 @@
 # LC-3
-A Little Computer 3 written in Zig that doesn't work (for now)
+A [ Little Computer 3 ](https://en.wikipedia.org/wiki/Little_Computer_3) written in Zig
 
 ## TODO
-- Work
-- Pure Zig (no C dependency)
+- README
