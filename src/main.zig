@@ -50,6 +50,7 @@ const Flags = enum(u16) {
     FL_ZRO = 1 << 1, // Z
     FL_NEG = 1 << 2, // N
 };
+
 const Traps = enum(u16) {
     TRAP_GETC = 0x20, // get character from keyboard, not echoed onto the terminal
     TRAP_OUT = 0x21, // output a character
@@ -329,10 +330,7 @@ pub fn main() !void {
                     },
                 }
             },
-            .OP_RES => {
-                os.exit(127);
-            },
-            .OP_RTI => {
+            .OP_RES, .OP_RTI => {
                 os.exit(127);
             },
         }
