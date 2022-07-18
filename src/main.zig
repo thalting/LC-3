@@ -65,13 +65,13 @@ const Keyboard = enum(u16) {
     MR_KBDR = 0xFE02, // keyboard data
 };
 
-fn mem_write(address: u16, val: u16) void {
+fn memWrite(address: u16, val: u16) void {
     memory[address] = val;
 }
 
-fn mem_read(address: u16) u16 {
+fn memRead(address: u16) u16 {
     if (address == @enumToInt(Keyboard.MR_KBSR)) {
-        if (check_key()) {
+        if (checkKey()) {
             memory[@enumToInt(Keyboard.MR_KBSR)] = (1 << 15);
             memory[@enumToInt(Keyboard.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
         } else {
@@ -81,7 +81,7 @@ fn mem_read(address: u16) u16 {
     return memory[address];
 }
 
-fn sign_extend(val: u16, comptime bit_count: u16) u16 {
+fn signExtend(val: u16, comptime bit_count: u16) u16 {
     var extended: u16 = val;
     // When negative sign, extend with 1's to maintain "negative" values.
     if (extended & (1 << bit_count - 1) > 0) {
@@ -91,7 +91,7 @@ fn sign_extend(val: u16, comptime bit_count: u16) u16 {
     return extended;
 }
 
-fn update_flags(r: u16) void {
+fn updateFlags(r: u16) void {
     if (reg[r] == 0) {
         reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_ZRO);
     } else if (reg[r] >> 15 != 0) { // a 1 in the left-most bit indicates negative
@@ -102,24 +102,24 @@ fn update_flags(r: u16) void {
 }
 
 var original_tio: os.termios = undefined;
-fn disable_input_buffering() !void {
+fn disableInputBuffering() !void {
     original_tio = try os.tcgetattr(0);
     var new_tio = original_tio;
     new_tio.lflag &= ~os.system.ICANON & ~os.system.ECHO;
     try os.tcsetattr(0, os.TCSA.NOW, new_tio);
 }
 
-fn restore_input_buffering() !void {
+fn restoreInputBuffering() !void {
     try os.tcsetattr(0, os.TCSA.NOW, original_tio);
 }
 
-fn handle_interrupt(signal: c_int) callconv(.C) void {
-    restore_input_buffering() catch {};
+fn handleInterrupt(signal: c_int) callconv(.C) void {
+    restoreInputBuffering() catch {};
     std.log.info("killed by signal: {}", .{signal});
     os.exit(2);
 }
 
-pub fn check_key() bool {
+fn checkKey() bool {
     var poll_stdin = [_]os.pollfd{.{
         .fd = 0,
         .events = os.POLL.IN,
@@ -129,7 +129,7 @@ pub fn check_key() bool {
     return poll_stdin[0].revents & os.POLL.IN > 0;
 }
 
-pub fn readImage(path: []const u8) !void {
+fn readImage(path: []const u8) !void {
     const img_file = try fs.cwd().openFile(path, .{});
     defer img_file.close();
     const reader = img_file.reader();
@@ -166,9 +166,9 @@ pub fn main() !void {
     }
 
     // Setup
-    try os.sigaction(os.SIG.INT, &.{ .handler = .{ .handler = handle_interrupt }, .mask = undefined, .flags = undefined }, null);
-    try disable_input_buffering();
-    defer restore_input_buffering() catch {};
+    try os.sigaction(os.SIG.INT, &.{ .handler = .{ .handler = handleInterrupt }, .mask = undefined, .flags = undefined }, null);
+    try disableInputBuffering();
+    defer restoreInputBuffering() catch {};
 
     // since exactly one condition flag should be set at any given time, set the Z flag
     reg[@enumToInt(Registers.R_COND)] = @enumToInt(Flags.FL_ZRO);
@@ -179,7 +179,7 @@ pub fn main() !void {
 
     while (running) {
         // FETCH
-        var instr: u16 = mem_read(reg[@enumToInt(Registers.R_PC)]);
+        var instr: u16 = memRead(reg[@enumToInt(Registers.R_PC)]);
         var op: Opcodes = @intToEnum(Opcodes, instr >> 12);
         reg[@enumToInt(Registers.R_PC)] += 1;
 
@@ -193,14 +193,14 @@ pub fn main() !void {
                 var imm_flag: u16 = (instr >> 5) & 0x1;
 
                 if (imm_flag == 1) {
-                    var imm5: u16 = sign_extend(instr & 0x1F, 5);
+                    var imm5: u16 = signExtend(instr & 0x1F, 5);
                     reg[r0] = reg[r1] +% imm5;
                 } else {
                     var r2: u16 = instr & 0x7;
                     reg[r0] = reg[r1] +% reg[r2];
                 }
 
-                update_flags(r0);
+                updateFlags(r0);
             },
             .OP_AND => {
                 var r0: u16 = (instr >> 9) & 0x7;
@@ -208,23 +208,23 @@ pub fn main() !void {
                 var imm_flag: u16 = (instr >> 5) & 0x1;
 
                 if (imm_flag == 1) {
-                    var imm5: u16 = sign_extend(instr & 0x1F, 5);
+                    var imm5: u16 = signExtend(instr & 0x1F, 5);
                     reg[r0] = reg[r1] & imm5;
                 } else {
                     var r2: u16 = instr & 0x7;
                     reg[r0] = reg[r1] & reg[r2];
                 }
-                update_flags(r0);
+                updateFlags(r0);
             },
             .OP_NOT => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var r1: u16 = (instr >> 6) & 0x7;
 
                 reg[r0] = ~reg[r1];
-                update_flags(r0);
+                updateFlags(r0);
             },
             .OP_BR => {
-                var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
+                var pc_offset: u16 = signExtend(instr & 0x1FF, 9);
                 var cond_flag: u16 = (instr >> 9) & 0x7;
 
                 if (cond_flag & reg[@enumToInt(Registers.R_COND)] != 0) {
@@ -241,7 +241,7 @@ pub fn main() !void {
                 reg[@enumToInt(Registers.R_R7)] = reg[@enumToInt(Registers.R_PC)];
 
                 if (long_flag == 1) {
-                    var long_pc_offset: u16 = sign_extend(instr & 0x7FF, 11);
+                    var long_pc_offset: u16 = signExtend(instr & 0x7FF, 11);
                     reg[@enumToInt(Registers.R_PC)] +%= long_pc_offset; // JSR
                 } else {
                     var r1: u16 = (instr >> 6) & 0x7;
@@ -250,49 +250,49 @@ pub fn main() !void {
             },
             .OP_LD => {
                 var r0: u16 = (instr >> 9) & 0x7;
-                var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
+                var pc_offset: u16 = signExtend(instr & 0x1FF, 9);
 
-                reg[r0] = mem_read(reg[@enumToInt(Registers.R_PC)] +% pc_offset);
-                update_flags(r0);
+                reg[r0] = memRead(reg[@enumToInt(Registers.R_PC)] +% pc_offset);
+                updateFlags(r0);
             },
             .OP_LDI => {
                 // destination register (DR)
                 var r0: u16 = (instr >> 9) & 0x7;
                 // PCoffset 9
-                var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
+                var pc_offset: u16 = signExtend(instr & 0x1FF, 9);
                 // add pc_offset to the current PC, look at that memory location to get the final address
-                reg[r0] = mem_read(mem_read(reg[@enumToInt(Registers.R_PC)] +% pc_offset));
-                update_flags(r0);
+                reg[r0] = memRead(memRead(reg[@enumToInt(Registers.R_PC)] +% pc_offset));
+                updateFlags(r0);
             },
             .OP_LDR => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var r1: u16 = (instr >> 6) & 0x7;
-                var offset: u16 = sign_extend(instr & 0x3F, 6);
+                var offset: u16 = signExtend(instr & 0x3F, 6);
 
-                reg[r0] = mem_read(reg[r1] +% offset);
-                update_flags(r0);
+                reg[r0] = memRead(reg[r1] +% offset);
+                updateFlags(r0);
             },
             .OP_LEA => {
                 var r0: u16 = (instr >> 9) & 0x7;
-                var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
+                var pc_offset: u16 = signExtend(instr & 0x1FF, 9);
                 reg[r0] = reg[@enumToInt(Registers.R_PC)] +% pc_offset;
-                update_flags(r0);
+                updateFlags(r0);
             },
             .OP_ST => {
                 var r0: u16 = (instr >> 9) & 0x7;
-                var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
-                mem_write(reg[@enumToInt(Registers.R_PC)] +% pc_offset, reg[r0]);
+                var pc_offset: u16 = signExtend(instr & 0x1FF, 9);
+                memWrite(reg[@enumToInt(Registers.R_PC)] +% pc_offset, reg[r0]);
             },
             .OP_STI => {
                 var r0: u16 = (instr >> 9) & 0x7;
-                var pc_offset: u16 = sign_extend(instr & 0x1FF, 9);
-                mem_write(mem_read(reg[@enumToInt(Registers.R_PC)] +% pc_offset), reg[r0]);
+                var pc_offset: u16 = signExtend(instr & 0x1FF, 9);
+                memWrite(memRead(reg[@enumToInt(Registers.R_PC)] +% pc_offset), reg[r0]);
             },
             .OP_STR => {
                 var r0: u16 = (instr >> 9) & 0x7;
                 var r1: u16 = (instr >> 6) & 0x7;
-                var offset: u16 = sign_extend(instr & 0x3F, 6);
-                mem_write(reg[r1] +% offset, reg[r0]);
+                var offset: u16 = signExtend(instr & 0x3F, 6);
+                memWrite(reg[r1] +% offset, reg[r0]);
             },
             .OP_TRAP => {
                 reg[@enumToInt(Registers.R_R7)] = reg[@enumToInt(Registers.R_PC)];
@@ -300,7 +300,7 @@ pub fn main() !void {
                 switch (@intToEnum(Traps, instr & 0xFF)) {
                     .TRAP_GETC => {
                         reg[@enumToInt(Registers.R_R0)] = try std.io.getStdIn().reader().readByte();
-                        update_flags(@enumToInt(Registers.R_R0));
+                        updateFlags(@enumToInt(Registers.R_R0));
                     },
                     .TRAP_OUT => {
                         try std.io.getStdOut().writer().writeByte(@truncate(u8, reg[@enumToInt(Registers.R_R0)]));
@@ -316,7 +316,7 @@ pub fn main() !void {
                         var c: u8 = try std.io.getStdIn().reader().readByte();
                         try std.io.getStdOut().writer().print("{c}", .{c});
                         reg[@enumToInt(Registers.R_R0)] = c;
-                        update_flags(@enumToInt(Registers.R_R0));
+                        updateFlags(@enumToInt(Registers.R_R0));
                     },
                     .TRAP_PUTSP => {
                         const str = mem.sliceTo(memory[reg[@enumToInt(Registers.R_R0)]..], 0);
