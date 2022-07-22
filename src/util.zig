@@ -24,7 +24,6 @@ pub fn signExtend(val: u16, comptime bit_count: u16) u16 {
     // When negative sign, extend with 1's to maintain "negative" values.
     if (extended & (1 << bit_count - 1) > 0) {
         extended |= @truncate(u16, (0xFFFF << bit_count));
-        return extended;
     }
     return extended;
 }
