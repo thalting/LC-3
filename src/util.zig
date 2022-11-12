@@ -56,7 +56,7 @@ pub fn handleInterrupt(signal: c_int) callconv(.C) void {
     os.exit(2);
 }
 
-pub fn checkKey() bool {
+fn checkKey() bool {
     var poll_stdin = [_]os.pollfd{.{
         .fd = 0,
         .events = os.POLL.IN,
