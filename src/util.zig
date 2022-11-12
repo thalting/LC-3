@@ -71,10 +71,10 @@ pub fn readImage(path: []const u8) !void {
     defer img_file.close();
     const reader = img_file.reader();
     var orig = try reader.readIntBig(u16);
-    while (reader.readIntBig(u16) catch |e| switch (e) {
+    while (@as(?u16, reader.readIntBig(u16) catch |e| switch (e) {
         error.EndOfStream => null,
         else => return e,
-    }) |content| : (orig += 1) {
+    })) |content| : (orig += 1) {
         if (orig >= hardware.memory.len) return error.FileTooBig;
         hardware.memory[orig] = content;
     }
