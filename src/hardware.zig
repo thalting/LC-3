@@ -21,7 +21,7 @@ pub const Registers = enum(u16) {
 };
 
 // Storing the registers in an array
-pub var reg: [@enumToInt(Registers.R_COUNT)]u16 = undefined;
+pub var reg: [@intFromEnum(Registers.R_COUNT)]u16 = undefined;
 
 // Each opcode represents one task that the CPU “knows” how to do.
 // There are just 16 opcodes in LC-3.

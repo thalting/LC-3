@@ -12,7 +12,7 @@ A [ Little Computer 3 ](https://en.wikipedia.org/wiki/Little_Computer_3) written
 
 ### Dependencies
 
-* zig 0.10.0
+* zig 0.11.0
 
 ### Build
 
@@ -26,8 +26,8 @@ $ zig build
 $ lc-3 <image-file>
 ```
 
-### Running
-You can play the [2048](https://github.com/rpendleton/lc3-2048) game.
+### Applications for LC-3
+[2048](https://github.com/rpendleton/lc3-2048)
 
 ## License
 This project is licensed under the MIT License - see the LICENSE.md file for details.

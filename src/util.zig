@@ -8,12 +8,12 @@ pub fn memWrite(address: u16, val: u16) void {
 }
 
 pub fn memRead(address: u16) u16 {
-    if (address == @enumToInt(hardware.MemoryMappedRegisters.MR_KBSR)) {
+    if (address == @intFromEnum(hardware.MemoryMappedRegisters.MR_KBSR)) {
         if (checkKey()) {
-            hardware.memory[@enumToInt(hardware.MemoryMappedRegisters.MR_KBSR)] = (1 << 15);
-            hardware.memory[@enumToInt(hardware.MemoryMappedRegisters.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
+            hardware.memory[@intFromEnum(hardware.MemoryMappedRegisters.MR_KBSR)] = (1 << 15);
+            hardware.memory[@intFromEnum(hardware.MemoryMappedRegisters.MR_KBDR)] = std.io.getStdIn().reader().readByte() catch 0;
         } else {
-            hardware.memory[@enumToInt(hardware.MemoryMappedRegisters.MR_KBSR)] = 0;
+            hardware.memory[@intFromEnum(hardware.MemoryMappedRegisters.MR_KBSR)] = 0;
         }
     }
     return hardware.memory[address];
@@ -23,18 +23,18 @@ pub fn signExtend(val: u16, comptime bit_count: u16) u16 {
     var extended: u16 = val;
     // When negative sign, extend with 1's to maintain "negative" values.
     if (extended & (1 << bit_count - 1) > 0) {
-        extended |= @truncate(u16, (0xFFFF << bit_count));
+        extended |= @truncate(0xFFFF << bit_count);
     }
     return extended;
 }
 
 pub fn updateFlags(r: u16) void {
     if (hardware.reg[r] == 0) {
-        hardware.reg[@enumToInt(hardware.Registers.R_COND)] = @enumToInt(hardware.Flags.FL_ZRO);
+        hardware.reg[@intFromEnum(hardware.Registers.R_COND)] = @intFromEnum(hardware.Flags.FL_ZRO);
     } else if (hardware.reg[r] >> 15 != 0) { // a 1 in the left-most bit indicates negative
-        hardware.reg[@enumToInt(hardware.Registers.R_COND)] = @enumToInt(hardware.Flags.FL_NEG);
+        hardware.reg[@intFromEnum(hardware.Registers.R_COND)] = @intFromEnum(hardware.Flags.FL_NEG);
     } else {
-        hardware.reg[@enumToInt(hardware.Registers.R_COND)] = @enumToInt(hardware.Flags.FL_POS);
+        hardware.reg[@intFromEnum(hardware.Registers.R_COND)] = @intFromEnum(hardware.Flags.FL_POS);
     }
 }
 
