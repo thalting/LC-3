@@ -5,25 +5,18 @@ const os = std.posix;
 const mem = std.mem;
 
 pub fn main() !void {
-    {
-        // Load arguments
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer _ = gpa.deinit();
-        var arg_it = try std.process.ArgIterator.initWithAllocator(gpa.allocator());
-        defer arg_it.deinit();
-        var found_img = false;
-        _ = arg_it.skip();
-        while (arg_it.next()) |img| {
-            util.readImage(img) catch |e| {
-                std.log.err("failed to load image {s}: {s}", .{ img, @errorName(e) });
-                os.exit(1);
-            };
-            found_img = true;
-        }
-        if (!found_img) {
-            std.log.info("usage: lc3 [image-file1] ...", .{});
+    if (std.os.argv.len < 2) {
+        std.log.info("usage: lc3 [image-file1] ...", .{});
+        os.exit(1);
+    }
+
+    var args = std.process.args();
+    _ = args.skip();
+    while (args.next()) |img| {
+        util.readImage(img) catch |e| {
+            std.log.err("failed to load image {s}: {s}", .{ img, @errorName(e) });
             os.exit(1);
-        }
+        };
     }
 
     // Setup

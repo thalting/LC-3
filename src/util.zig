@@ -40,7 +40,7 @@ pub inline fn updateFlags(r: u16) void {
 }
 
 var original_termios: posix.termios = undefined;
-pub fn disableInputBuffering() !void {
+pub inline fn disableInputBuffering() !void {
     original_termios = try posix.tcgetattr(stdin.handle);
 
     var termios = original_termios;

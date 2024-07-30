@@ -12,7 +12,7 @@ A [ Little Computer 3 ](https://en.wikipedia.org/wiki/Little_Computer_3) written
 
 ### Dependencies
 
-* zig 0.11.0
+* zig 0.13.0
 
 ### Build
 
